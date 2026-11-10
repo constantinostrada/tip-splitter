@@ -13,3 +13,7 @@ What: validateBill / validatePeople test the raw text with regexes (`^-?\d*(\.\d
 ## Styles live inline in index.html
 
 What: all CSS is in a `<style>` block in index.html; there is no stylesheet file · Why: the work order allows only index.html + app.js and no external resources · Where: index.html
+
+## Money is integer cents; leftover cents spread one each, never rounded up
+
+What: results convert the bill to cents, round the tip to the nearest cent, then split the total as `base = floor(total/people)` with `total % people` people paying base + 1 cent; amounts are formatted by a hand-written `formatCents` ("$1.250,00"), not Intl · Why: the parts must sum exactly to the total (an earlier "always round up" attempt was cancelled for overcharging), floats leak artifacts like 0,30000000000000004, and Intl's es-* locales disagree on grouping 4-digit numbers and spacing after "$" · Where: app.js results module (toCents, calculate, formatCents)
