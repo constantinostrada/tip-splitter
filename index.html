@@ -36,7 +36,8 @@
     .field { margin-bottom: 20px; }
     .field:last-child { margin-bottom: 0; }
     label, legend { display: block; font-weight: 600; margin-bottom: 6px; }
-    input[type="number"] {
+    input[type="number"],
+    input[type="text"] {
       width: 100%;
       font: inherit;
       padding: 10px 12px;
@@ -46,19 +47,22 @@
       color: inherit;
     }
     input[type="number"]:focus-visible,
-    input[type="radio"]:focus-visible {
+    input[type="text"]:focus-visible,
+    input[type="radio"]:focus-visible,
+    input[type="checkbox"]:focus-visible {
       outline: 3px solid var(--accent);
       outline-offset: 2px;
     }
     input[aria-invalid="true"] { border-color: var(--error); }
     fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-    .options { display: flex; gap: 8px; flex-wrap: wrap; }
+    .options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
     .option {
       flex: 1 1 0;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 10px 12px;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 8px;
       border: 1px solid var(--border);
       border-radius: 8px;
       cursor: pointer;
@@ -69,6 +73,18 @@
       border-color: var(--accent);
       background: #e9f3f0;
     }
+    .custom-tip { margin-top: 12px; }
+    .custom-tip label { font-weight: normal; }
+    .custom-tip .input-row { display: flex; align-items: center; gap: 8px; }
+    .custom-tip input:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+    .switch {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      cursor: pointer;
+    }
+    .switch input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
     .error {
       display: block;
       min-height: 1.2em;
@@ -129,16 +145,34 @@
           <label class="option"><input type="radio" name="tip" value="10"> 10%</label>
           <label class="option"><input type="radio" name="tip" value="15" checked> 15%</label>
           <label class="option"><input type="radio" name="tip" value="20"> 20%</label>
+          <label class="option"><input type="radio" name="tip" value="other"> Otro</label>
+        </div>
+        <div class="custom-tip">
+          <label for="tip-custom">% de propina</label>
+          <div class="input-row">
+            <input id="tip-custom" name="tip-custom" type="text" inputmode="decimal"
+                   placeholder="Ej.: 18 o 12,5" disabled aria-describedby="tip-custom-error">
+            <span aria-hidden="true">%</span>
+          </div>
+          <span id="tip-custom-error" class="error" role="alert" aria-live="polite"></span>
         </div>
       </fieldset>
+    </div>
+
+    <div class="field">
+      <label class="switch" for="round-up">
+        <input id="round-up" name="round-up" type="checkbox" role="switch">
+        Redondear por persona
+      </label>
     </div>
   </form>
 
   <section id="results" class="results" aria-live="polite" aria-label="Resultados">
     <div class="result">
-      <span class="result-label">Propina</span>
+      <span id="tip-label" class="result-label">Propina</span>
       <span id="tip-amount" class="result-value">—</span>
     </div>
+    <p id="tip-rate-note" class="note" hidden></p>
     <div class="result">
       <span class="result-label">Total con propina</span>
       <span id="total-amount" class="result-value">—</span>
