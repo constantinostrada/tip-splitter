@@ -37,7 +37,8 @@
     .field:last-child { margin-bottom: 0; }
     label, legend { display: block; font-weight: 600; margin-bottom: 6px; }
     input[type="number"],
-    input[type="text"] {
+    input[type="text"],
+    select {
       width: 100%;
       font: inherit;
       padding: 10px 12px;
@@ -49,7 +50,8 @@
     input[type="number"]:focus-visible,
     input[type="text"]:focus-visible,
     input[type="radio"]:focus-visible,
-    input[type="checkbox"]:focus-visible {
+    input[type="checkbox"]:focus-visible,
+    select:focus-visible {
       outline: 3px solid var(--accent);
       outline-offset: 2px;
     }
@@ -119,11 +121,165 @@
     .result-value .line { display: block; }
     .note { margin: 4px 0 0; font-size: 0.9rem; color: var(--muted); text-align: right; }
     .note[hidden] { display: none; }
+    .result[hidden] { display: none; }
+    .results:has(#no-tip-row[hidden]) .result:nth-last-of-type(2) { border-bottom: 0; }
+    .hint { margin: 0 0 6px; font-size: 0.9rem; color: var(--muted); }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .actions button {
+      font: inherit;
+      font-weight: 600;
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .actions #reset { grid-column: 1 / -1; }
+    .btn-primary { background: var(--accent); border: 1px solid var(--accent); color: #fff; }
+    .btn-secondary { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+    .actions button:disabled {
+      background: var(--bg);
+      border-color: var(--border);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+    .actions button:focus-visible,
+    .copy-fallback textarea:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .copy-fallback { margin-top: 12px; }
+    .copy-fallback[hidden] { display: none; }
+    .copy-fallback p { margin: 0 0 6px; font-size: 0.9rem; }
+    .copy-fallback textarea {
+      width: 100%;
+      font: inherit;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: inherit;
+      resize: vertical;
+    }
+    .history {
+      margin-top: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .history h2 { font-size: 1.1rem; margin: 0 0 8px; }
+    .history-empty { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }
+    .history-empty[hidden], .history-list[hidden] { display: none; }
+    .history-list { list-style: none; margin: 0 0 12px; padding: 0; }
+    .history-list li + li { margin-top: 6px; }
+    .history-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      font: inherit;
+      color: inherit;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .history-item:hover { border-color: var(--accent); }
+    .history-date { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .history-total { font-weight: 700; }
+    #history-clear {
+      font: inherit;
+      font-weight: 600;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #history-clear:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+    .history-item:focus-visible,
+    #history-clear:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .options-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #equal-fields[hidden], #detail-fields[hidden], .detail-results[hidden] { display: none; }
+    #equal-fields > .field, #detail-fields > .field { margin-bottom: 20px; }
+    .detail-list { list-style: none; margin: 0 0 8px; padding: 0; }
+    .detail-list > li + li { margin-top: 8px; }
+    .detail-row { display: flex; align-items: center; gap: 6px; }
+    .detail-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
+    .item-row input[data-field="price"] { flex: 0 0 7.5em; }
+    .detail-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+    .detail-item input[aria-invalid="true"] { border-color: var(--error); }
+    .who { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-weight: normal;
+      cursor: pointer;
+    }
+    .chip:has(input:checked) { border-color: var(--accent); background: #e9f3f0; }
+    .chip input { margin: 0; accent-color: var(--accent); }
+    .btn-small {
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    .btn-small:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+    .btn-small:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .detail-subtotal { margin: 12px 0 0; color: var(--muted); }
+    .detail-results { list-style: none; margin: 0; padding: 0; }
+    .result-sub { display: block; font-size: 0.85rem; }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
   </style>
 </head>
 <body>
   <h1>Tip Splitter</h1>
   <form id="tip-form" novalidate autocomplete="off">
+    <div class="field">
+      <label for="currency">Moneda</label>
+      <select id="currency" name="currency">
+        <option value="$" selected>$ (pesos)</option>
+        <option value="€">€ (euros)</option>
+        <option value="US$">US$ (dólares)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <fieldset>
+        <legend>Cómo dividir</legend>
+        <div class="options options-2">
+          <label class="option"><input type="radio" name="mode" value="equal" checked> Partes iguales</label>
+          <label class="option"><input type="radio" name="mode" value="items"> Cuenta detallada</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <div id="equal-fields">
     <div class="field">
       <label for="bill">Bill total</label>
       <input id="bill" name="bill" type="number" inputmode="decimal"
@@ -136,6 +292,34 @@
       <input id="people" name="people" type="number" inputmode="numeric"
              min="1" step="1" aria-describedby="people-error">
       <span id="people-error" class="error" role="alert" aria-live="polite"></span>
+    </div>
+
+    <div class="field">
+      <label for="no-tip">Alguien no toma propina</label>
+      <p id="no-tip-hint" class="hint">Cuántas personas pagan solo su parte de la cuenta, sin propina. La propina se reparte entre el resto.</p>
+      <input id="no-tip" name="no-tip" type="number" inputmode="numeric"
+             min="0" step="1" placeholder="0" aria-describedby="no-tip-hint no-tip-error">
+      <span id="no-tip-error" class="error" role="alert" aria-live="polite"></span>
+    </div>
+    </div>
+
+    <div id="detail-fields" hidden>
+      <div class="field">
+        <fieldset>
+          <legend>Personas</legend>
+          <ol id="detail-people" class="detail-list"></ol>
+          <button type="button" id="add-person" class="btn-small">Agregar persona</button>
+        </fieldset>
+      </div>
+      <div class="field">
+        <fieldset>
+          <legend>Ítems del ticket</legend>
+          <p class="hint">Cargá cada ítem con su precio y marcá quién lo consumió. Si lo comparten varios, se divide entre ellos. La propina se reparte según lo que consumió cada uno.</p>
+          <ol id="detail-items" class="detail-list"></ol>
+          <button type="button" id="add-item" class="btn-small">Agregar ítem</button>
+          <p class="detail-subtotal">Total del ticket: <strong id="detail-subtotal">—</strong></p>
+        </fieldset>
+      </div>
     </div>
 
     <div class="field">
@@ -177,11 +361,35 @@
       <span class="result-label">Total con propina</span>
       <span id="total-amount" class="result-value">—</span>
     </div>
-    <div class="result">
-      <span class="result-label">Por persona</span>
+    <div id="per-person-row" class="result">
+      <span id="per-person-label" class="result-label">Por persona</span>
       <span id="per-person" class="result-value"><span class="line">—</span></span>
     </div>
     <p id="per-person-note" class="note" hidden></p>
+    <div id="no-tip-row" class="result" hidden>
+      <span class="result-label">Sin propina</span>
+      <span id="no-tip-amount" class="result-value"></span>
+    </div>
+    <ul id="detail-results" class="detail-results" aria-label="Cuánto paga cada uno" hidden></ul>
+  </section>
+
+  <div class="actions">
+    <button type="button" id="copy-summary" class="btn-primary" disabled>Copiar resumen</button>
+    <button type="button" id="share-whatsapp" class="btn-primary" disabled>Compartir por WhatsApp</button>
+    <button type="button" id="reset" class="btn-secondary">Empezar de nuevo</button>
+  </div>
+  <p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+  <div id="copy-fallback" class="copy-fallback" hidden>
+    <p id="copy-fallback-note">No se pudo copiar automáticamente. El texto ya está seleccionado: copialo a mano.</p>
+    <textarea id="copy-fallback-text" rows="3" readonly
+              aria-labelledby="copy-fallback-note"></textarea>
+  </div>
+
+  <section id="history" class="history" aria-labelledby="history-title">
+    <h2 id="history-title">Últimas cuentas</h2>
+    <p id="history-empty" class="history-empty">Todavía no hay cuentas guardadas.</p>
+    <ol id="history-list" class="history-list" hidden></ol>
+    <button type="button" id="history-clear" class="btn-secondary" disabled>Borrar historial</button>
   </section>
 
   <script src="app.js" defer></script>
