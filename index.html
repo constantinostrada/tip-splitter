@@ -77,6 +77,32 @@
       color: var(--error);
     }
     .error:empty { display: none; }
+    .results {
+      margin-top: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .result {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .result:last-of-type { border-bottom: 0; }
+    .result-label { color: var(--muted); }
+    .result-value {
+      font-weight: 700;
+      font-size: 1.25rem;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .result-value .line { display: block; }
+    .note { margin: 4px 0 0; font-size: 0.9rem; color: var(--muted); text-align: right; }
+    .note[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -107,6 +133,22 @@
       </fieldset>
     </div>
   </form>
+
+  <section id="results" class="results" aria-live="polite" aria-label="Resultados">
+    <div class="result">
+      <span class="result-label">Propina</span>
+      <span id="tip-amount" class="result-value">—</span>
+    </div>
+    <div class="result">
+      <span class="result-label">Total con propina</span>
+      <span id="total-amount" class="result-value">—</span>
+    </div>
+    <div class="result">
+      <span class="result-label">Por persona</span>
+      <span id="per-person" class="result-value"><span class="line">—</span></span>
+    </div>
+    <p id="per-person-note" class="note" hidden></p>
+  </section>
 
   <script src="app.js" defer></script>
 </body>

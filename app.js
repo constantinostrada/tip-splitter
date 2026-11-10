@@ -170,3 +170,135 @@
     init();
   }
 })();
+
+/*
+ * Tip Splitter — results module.
+ *
+ * All money is handled as integer cents so no floating-point artifacts reach
+ * the screen. The tip is rounded to the nearest cent before being added to the
+ * bill; when the total does not divide evenly, the leftover cents go one each
+ * to the first people, so the parts always add up to the exact total.
+ */
+(function () {
+  'use strict';
+
+  var DASH = '—';
+
+  function isCount(n) {
+    return typeof n === 'number' && Number.isSafeInteger(n);
+  }
+
+  // Bill (already validated to at most 2 decimals) -> integer cents, or null.
+  function toCents(bill) {
+    if (typeof bill !== 'number' || !isFinite(bill)) return null;
+    var cents = Math.round(bill * 100);
+    return isCount(cents) && cents > 0 ? cents : null;
+  }
+
+  // Returns { tipCents, totalCents, base, extra, people } or null.
+  //   extra people pay base + 1 cent, the remaining (people - extra) pay base.
+  function calculate(billCents, people, tipPercent) {
+    if (!isCount(billCents) || billCents <= 0) return null;
+    if (!isCount(people) || people < 1) return null;
+    if (!isCount(tipPercent) || tipPercent < 0) return null;
+    var scaled = billCents * tipPercent;
+    if (!isCount(scaled)) return null;
+    var tipCents = Math.round(scaled / 100);
+    var totalCents = billCents + tipCents;
+    if (!isCount(totalCents)) return null;
+    var base = Math.floor(totalCents / people);
+    var extra = totalCents - base * people;
+    return { tipCents: tipCents, totalCents: totalCents, base: base, extra: extra, people: people };
+  }
+
+  // 125000 -> "$1.250,00". Manual on purpose: Intl's es-* locales differ on
+  // grouping 4-digit numbers and on the space after "$".
+  function formatCents(cents) {
+    if (!isCount(cents) || cents < 0) return DASH;
+    var whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    var frac = String(cents % 100);
+    if (frac.length < 2) frac = '0' + frac;
+    return '$' + whole + ',' + frac;
+  }
+
+  var tipEl, totalEl, perPersonEl, noteEl;
+
+  function setLines(lines) {
+    while (perPersonEl.firstChild) perPersonEl.removeChild(perPersonEl.firstChild);
+    lines.forEach(function (text) {
+      var span = document.createElement('span');
+      span.className = 'line';
+      span.textContent = text;
+      perPersonEl.appendChild(span);
+    });
+  }
+
+  function showEmpty() {
+    tipEl.textContent = DASH;
+    totalEl.textContent = DASH;
+    setLines([DASH]);
+    noteEl.textContent = '';
+    noteEl.hidden = true;
+  }
+
+  function render(values) {
+    try {
+      var r = values && values.valid
+        ? calculate(toCents(values.bill), values.people, values.tipPercent)
+        : null;
+      if (!r) { showEmpty(); return; }
+
+      tipEl.textContent = formatCents(r.tipCents);
+      totalEl.textContent = formatCents(r.totalCents);
+      if (r.extra === 0) {
+        setLines([formatCents(r.base)]);
+        noteEl.textContent = '';
+        noteEl.hidden = true;
+      } else {
+        setLines([
+          r.extra + ' × ' + formatCents(r.base + 1),
+          (r.people - r.extra) + ' × ' + formatCents(r.base)
+        ]);
+        noteEl.textContent = r.extra === 1
+          ? '1 persona paga $0,01 más'
+          : r.extra + ' personas pagan $0,01 más';
+        noteEl.hidden = false;
+      }
+    } catch (err) {
+      console.error('TipSplitter results failed', err);
+      showEmpty();
+    }
+  }
+
+  function init() {
+    tipEl = document.getElementById('tip-amount');
+    totalEl = document.getElementById('total-amount');
+    perPersonEl = document.getElementById('per-person');
+    noteEl = document.getElementById('per-person-note');
+    if (!tipEl || !totalEl || !perPersonEl || !noteEl) {
+      console.error('TipSplitter: result elements are missing from index.html');
+      return;
+    }
+    var api = window.TipSplitter;
+    if (!api || typeof api.onChange !== 'function' || typeof api.getValues !== 'function') {
+      console.error('TipSplitter: inputs module is not available');
+      showEmpty();
+      return;
+    }
+    api.onChange(render);
+    render(api.getValues());
+  }
+
+  if (window.TipSplitter) {
+    // Exposed for testing; pure functions with no DOM access.
+    window.TipSplitter.toCents = toCents;
+    window.TipSplitter.calculate = calculate;
+    window.TipSplitter.formatCents = formatCents;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
