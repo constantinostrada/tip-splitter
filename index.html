@@ -244,6 +244,33 @@
     .detail-subtotal { margin: 12px 0 0; color: var(--muted); }
     .detail-results { list-style: none; margin: 0; padding: 0; }
     .result-sub { display: block; font-size: 0.85rem; }
+    .rounds { margin-bottom: 12px; }
+    .rounds[hidden], .round-tabs[hidden], .round-edit[hidden], .outing-people[hidden],
+    #outing-totals[hidden] { display: none; }
+    .round-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .round-tab {
+      font: inherit;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .round-tab[aria-current="true"] { border-color: var(--accent); background: #e9f3f0; font-weight: 600; }
+    .round-tab .round-flag { color: var(--error); font-size: 0.85rem; }
+    .round-tab:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .round-edit, .outing-people {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .round-add-row { display: flex; justify-content: flex-end; }
+    #outing-totals h2 { font-size: 1.1rem; margin: 0 0 8px; }
+    #outing-persons .result:last-of-type { border-bottom: 1px solid var(--border); }
+    .outing-grand .result-label { color: var(--text); font-weight: 600; }
     .visually-hidden {
       position: absolute;
       width: 1px;
@@ -259,6 +286,30 @@
 </head>
 <body>
   <h1>Tip Splitter</h1>
+  <section id="rounds" class="rounds" aria-label="Rondas">
+    <div id="round-tabs" class="round-tabs" role="group" aria-label="Rondas de la salida" hidden></div>
+    <div id="round-edit" class="round-edit" hidden>
+      <label for="round-label">Nombre de la ronda</label>
+      <div class="detail-row">
+        <input id="round-label" type="text" maxlength="32" autocomplete="off">
+        <button type="button" id="round-remove" class="btn-small">Quitar ronda</button>
+      </div>
+    </div>
+    <div id="outing-people-field" class="outing-people" hidden>
+      <fieldset>
+        <legend>Personas de la salida</legend>
+        <p class="hint">Son las mismas en todas las rondas; en cada ronda marcás quién estuvo.</p>
+        <ol id="outing-people" class="detail-list"></ol>
+        <button type="button" id="outing-add-person" class="btn-small">Agregar persona</button>
+        <span id="outing-people-error" class="error" role="alert" aria-live="polite"></span>
+      </fieldset>
+    </div>
+    <div class="round-add-row">
+      <button type="button" id="round-add" class="btn-small">Agregar ronda</button>
+    </div>
+    <span id="round-error" class="error" role="alert" aria-live="polite"></span>
+    <p id="round-status" class="visually-hidden" role="status" aria-live="polite"></p>
+  </section>
   <form id="tip-form" novalidate autocomplete="off">
     <div class="field">
       <label for="currency">Moneda</label>
@@ -287,14 +338,23 @@
       <span id="bill-error" class="error" role="alert" aria-live="polite"></span>
     </div>
 
-    <div class="field">
+    <div class="field" id="people-field">
       <label for="people">Number of people</label>
       <input id="people" name="people" type="number" inputmode="numeric"
              min="1" step="1" aria-describedby="people-error">
       <span id="people-error" class="error" role="alert" aria-live="polite"></span>
     </div>
 
-    <div class="field">
+    <div class="field" id="round-people-field" hidden>
+      <fieldset>
+        <legend>Quiénes estuvieron</legend>
+        <p class="hint">Marcá quién estuvo en esta ronda. «Sin propina» paga solo su parte de la cuenta.</p>
+        <ul id="round-people" class="detail-list"></ul>
+        <span id="round-people-error" class="error" role="alert" aria-live="polite"></span>
+      </fieldset>
+    </div>
+
+    <div class="field" id="no-tip-field">
       <label for="no-tip">Alguien no toma propina</label>
       <p id="no-tip-hint" class="hint">Cuántas personas pagan solo su parte de la cuenta, sin propina. La propina se reparte entre el resto.</p>
       <input id="no-tip" name="no-tip" type="number" inputmode="numeric"
@@ -304,7 +364,7 @@
     </div>
 
     <div id="detail-fields" hidden>
-      <div class="field">
+      <div class="field" id="detail-people-field">
         <fieldset>
           <legend>Personas</legend>
           <ol id="detail-people" class="detail-list"></ol>
@@ -371,6 +431,16 @@
       <span id="no-tip-amount" class="result-value"></span>
     </div>
     <ul id="detail-results" class="detail-results" aria-label="Cuánto paga cada uno" hidden></ul>
+  </section>
+
+  <section id="outing-totals" class="results" aria-live="polite" aria-labelledby="outing-title" hidden>
+    <h2 id="outing-title">Total de la salida</h2>
+    <ul id="outing-persons" class="detail-results" aria-label="Cuánto lleva cada uno"></ul>
+    <div class="result outing-grand">
+      <span class="result-label">Total de todas las rondas</span>
+      <span id="outing-grand" class="result-value"></span>
+    </div>
+    <p id="outing-note" class="note" hidden></p>
   </section>
 
   <div class="actions">
