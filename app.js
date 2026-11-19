@@ -169,6 +169,80 @@
     return { tenths: tenths, error: '' };
   }
 
+  // Sorted, unique person indexes in 0..size-1 (anything else is dropped).
+  function indexList(list, size) {
+    if (!Array.isArray(list)) return [];
+    var seen = {};
+    var out = [];
+    list.forEach(function (p) {
+      if (typeof p === 'number' && Number.isInteger(p) && p >= 0 && p < size && !seen[p]) {
+        seen[p] = true;
+        out.push(p);
+      }
+    });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // Raw control text (what getRaw() returns) -> values, the same shape as
+  // getValues(). Pure, so a round that is not on screen is computed with the
+  // exact rules of the one that is.
+  //   named = true (an outing with 2+ rounds): in equal parts the people are
+  //   raw.who (indexes into raw.detail.people, the outing's people) and the
+  //   ones who skip the tip are raw.noTipWho; raw.people / raw.noTip are ignored.
+  function evaluate(raw, named) {
+    raw = raw || {};
+    var bill = validateBill(raw.bill);
+    var mode = raw.mode === ITEMS ? ITEMS : EQUAL;
+    var detailIn = raw.detail && Array.isArray(raw.detail.people) && Array.isArray(raw.detail.items)
+      ? raw.detail : defaultDetail();
+    var detail = validateDetail(detailIn);
+    var tip;
+    if (raw.tip === OTHER) {
+      var custom = validateTipCustom(raw.custom);
+      tip = { choice: OTHER, tenths: custom.tenths, error: custom.error };
+    } else {
+      var fixed = validateTip(raw.tip);
+      tip = { choice: String(fixed), tenths: fixed * 10, error: '' };
+    }
+    var people, noTip, who = null, noTipWho = null;
+    if (named) {
+      var size = detailIn.people.length;
+      who = indexList(raw.who, size);
+      noTipWho = indexList(raw.noTipWho, size).filter(function (p) { return who.indexOf(p) !== -1; });
+      people = who.length
+        ? { value: who.length, error: '' }
+        : { value: null, error: 'Marcá quién estuvo en esta ronda.' };
+      noTip = who.length && noTipWho.length >= who.length
+        ? { value: null, error: 'Tiene que quedar al menos una persona que pague la propina.' }
+        : { value: noTipWho.length, error: '' };
+    } else {
+      people = validatePeople(raw.people);
+      noTip = validateNoTip(raw.noTip, people.value);
+    }
+    var tipOk = !tip.error && tip.tenths != null;
+    var values = {
+      mode: mode,
+      detail: mode === ITEMS ? snapshotDetail(detail.value) : null,
+      bill: bill.value,
+      people: people.value,
+      noTip: noTip.value,
+      tipChoice: tip.choice,
+      tipPercent: tip.tenths == null ? null : tip.tenths / 10,
+      tipTenths: tip.tenths,
+      roundUp: !!raw.roundUp,
+      currency: validateCurrency(raw.currency),
+      valid: mode === ITEMS
+        ? tipOk && detail.value != null
+        : !bill.error && !people.error && !noTip.error && noTip.value != null && tipOk,
+      errors: {
+        bill: bill.error, people: people.error, noTip: noTip.error, tip: tip.error,
+        items: detail.errors
+      }
+    };
+    if (named) { values.who = who; values.noTipWho = noTipWho; }
+    return values;
+  }
+
   // ---- State ------------------------------------------------------------
 
   var state = {
@@ -187,6 +261,12 @@
   var listeners = [];
   // Raw text of "Cuenta detallada" (kept while in equal mode too).
   var detailRaw = defaultDetail();
+  // Named mode (an outing with 2+ rounds, see the rounds block): detailRaw.people
+  // is the outing's people list; in equal parts whoRaw are the ones at this
+  // round and noTipRaw the ones among them who skip the tip.
+  var named = false;
+  var whoRaw = [];
+  var noTipRaw = [];
 
   function snapshotDetail(d) {
     if (!d) return null;
@@ -199,6 +279,15 @@
   }
 
   function snapshot() {
+    var values = snapshotState();
+    if (named) {
+      values.who = (state.who || []).slice();
+      values.noTipWho = (state.noTipWho || []).slice();
+    }
+    return values;
+  }
+
+  function snapshotState() {
     return {
       mode: state.mode,
       detail: snapshotDetail(state.detail),
@@ -234,20 +323,7 @@
   var billInput, peopleInput, billError, peopleError, tipRadios;
   var customInput, customError, roundUpInput, noTipInput, noTipError, currencyInput;
   var modeRadios, equalFields, detailFields, peopleList, itemsList, addPersonBtn, addItemBtn;
-
-  // -> { choice, tenths, error }
-  function readTip() {
-    for (var i = 0; i < tipRadios.length; i++) {
-      if (!tipRadios[i].checked) continue;
-      if (tipRadios[i].value === OTHER) {
-        var custom = validateTipCustom(customInput.value);
-        return { choice: OTHER, tenths: custom.tenths, error: custom.error };
-      }
-      var fixed = validateTip(tipRadios[i].value);
-      return { choice: String(fixed), tenths: fixed * 10, error: '' };
-    }
-    return { choice: String(DEFAULT_TIP), tenths: DEFAULT_TIP * 10, error: '' };
-  }
+  var peopleField, noTipField, detailPeopleField, roundPeopleField, roundPeopleList, roundPeopleError;
 
   function readMode() {
     for (var i = 0; i < modeRadios.length; i++) {
@@ -270,42 +346,55 @@
   // Reads every control into state; showFieldErrors=false on first load so
   // untouched empty fields are not flagged.
   function readAll(showFieldErrors) {
-    var bill = validateBill(rawValue(billInput));
-    var people = validatePeople(rawValue(peopleInput));
-    var noTip = validateNoTip(rawValue(noTipInput), people.value);
-    var tip = readTip();
-    var mode = readMode();
-    var detail = validateDetail(detailRaw);
-    state.mode = mode;
-    state.detail = mode === ITEMS ? detail.value : null;
-    state.bill = bill.value;
-    state.people = people.value;
-    state.noTip = noTip.value;
-    state.tipChoice = tip.choice;
-    state.tipTenths = tip.tenths;
-    state.roundUp = !!roundUpInput.checked;
-    state.currency = validateCurrency(currencyInput.value);
-    state.errors.bill = bill.error;
-    state.errors.people = people.error;
-    state.errors.noTip = noTip.error;
-    state.errors.tip = tip.error;
-    state.errors.items = detail.errors;
-    var tipOk = !tip.error && tip.tenths != null;
-    state.valid = mode === ITEMS
-      ? tipOk && detail.value != null
-      : !bill.error && !people.error && !noTip.error && noTip.value != null && tipOk;
-    equalFields.hidden = mode !== EQUAL;
-    detailFields.hidden = mode !== ITEMS;
-    customInput.disabled = tip.choice !== OTHER;
+    var raw = getRaw();
+    // type=number fields: unparsable text counts as invalid, not as empty.
+    raw.bill = rawValue(billInput);
+    if (!named) {
+      raw.people = rawValue(peopleInput);
+      raw.noTip = rawValue(noTipInput);
+    }
+    var v = evaluate(raw, named);
+    state.mode = v.mode;
+    state.detail = v.detail;
+    state.bill = v.bill;
+    state.people = v.people;
+    state.noTip = v.noTip;
+    state.tipChoice = v.tipChoice;
+    state.tipTenths = v.tipTenths;
+    state.roundUp = v.roundUp;
+    state.currency = v.currency;
+    state.errors.bill = v.errors.bill;
+    state.errors.people = v.errors.people;
+    state.errors.noTip = v.errors.noTip;
+    state.errors.tip = v.errors.tip;
+    state.errors.items = v.errors.items;
+    state.valid = v.valid;
+    state.who = v.who || null;
+    state.noTipWho = v.noTipWho || null;
+    equalFields.hidden = v.mode !== EQUAL;
+    detailFields.hidden = v.mode !== ITEMS;
+    // With 2+ rounds the people come from the outing's list (named mode).
+    peopleField.hidden = named;
+    noTipField.hidden = named;
+    detailPeopleField.hidden = named;
+    roundPeopleField.hidden = !named;
+    customInput.disabled = v.tipChoice !== OTHER;
     // The "Otro" field reports its own errors as soon as it is in use.
-    showError(customInput, customError, tip.error);
+    showError(customInput, customError, v.errors.tip);
     // Same for "Alguien no toma propina": it is optional, so empty is never an error.
-    showError(noTipInput, noTipError, noTip.error);
+    if (named) showError(noTipInput, noTipError, '');
+    else showError(noTipInput, noTipError, v.errors.noTip);
     // And for each ticket row.
-    showItemErrors(detail.errors);
+    showItemErrors(v.errors.items);
+    if (named) {
+      var msg = v.errors.people || v.errors.noTip;
+      if (roundPeopleError.textContent !== msg) roundPeopleError.textContent = msg;
+    } else if (roundPeopleError.textContent) {
+      roundPeopleError.textContent = '';
+    }
     if (showFieldErrors) {
-      showError(billInput, billError, bill.error);
-      showError(peopleInput, peopleError, people.error);
+      showError(billInput, billError, v.errors.bill);
+      if (!named) showError(peopleInput, peopleError, v.errors.people);
     }
   }
 
@@ -412,6 +501,52 @@
   function renderDetail() {
     renderPeople();
     renderItems();
+    renderParticipants();
+  }
+
+  // Named mode, equal parts: one row per person of the outing with
+  // "Estuvo" (takes part in this round) and "Sin propina".
+  function renderParticipants() {
+    while (roundPeopleList.firstChild) roundPeopleList.removeChild(roundPeopleList.firstChild);
+    if (!named) return;
+    detailRaw.people.forEach(function (p, i) {
+      var inRound = whoRaw.indexOf(i) !== -1;
+      var part = el('input', { type: 'checkbox', id: 'part-' + i, 'data-part': String(i) });
+      part.checked = inRound;
+      var skip = el('input', { type: 'checkbox', 'data-skip': String(i) });
+      skip.checked = inRound && noTipRaw.indexOf(i) !== -1;
+      skip.disabled = !inRound;
+      roundPeopleList.appendChild(el('li', { className: 'detail-row' }, [
+        el('label', { className: 'chip part-chip' }, [
+          part, el('span', { 'data-part-name': String(i), text: personLabel(i) })
+        ]),
+        el('label', { className: 'chip' }, [
+          skip, el('span', { text: 'Sin propina' })
+        ])
+      ]));
+    });
+  }
+
+  function onParticipantsChange(event) {
+    var t = event.target;
+    var i;
+    if (t.hasAttribute('data-part')) {
+      i = Number(t.getAttribute('data-part'));
+      whoRaw = whoRaw.filter(function (x) { return x !== i; });
+      if (t.checked) whoRaw.push(i);
+      else noTipRaw = noTipRaw.filter(function (x) { return x !== i; });
+      whoRaw.sort(function (a, b) { return a - b; });
+      var skip = roundPeopleList.querySelector('[data-skip="' + i + '"]');
+      if (skip) { skip.disabled = !t.checked; if (!t.checked) skip.checked = false; }
+    } else if (t.hasAttribute('data-skip')) {
+      i = Number(t.getAttribute('data-skip'));
+      noTipRaw = noTipRaw.filter(function (x) { return x !== i; });
+      if (t.checked && whoRaw.indexOf(i) !== -1) noTipRaw.push(i);
+      noTipRaw.sort(function (a, b) { return a - b; });
+    } else {
+      return;
+    }
+    update();
   }
 
   function showItemErrors(errors) {
@@ -431,6 +566,8 @@
     for (var k = 0; k < spans.length; k++) spans[k].textContent = label;
     var btn = peopleList.querySelector('[data-remove-person="' + i + '"]');
     if (btn) btn.setAttribute('aria-label', 'Quitar a ' + label);
+    var part = roundPeopleList.querySelector('[data-part-name="' + i + '"]');
+    if (part) part.textContent = label;
   }
 
   function focusId(id) {
@@ -521,11 +658,19 @@
     itemsList = document.getElementById('detail-items');
     addPersonBtn = document.getElementById('add-person');
     addItemBtn = document.getElementById('add-item');
+    peopleField = document.getElementById('people-field');
+    noTipField = document.getElementById('no-tip-field');
+    detailPeopleField = document.getElementById('detail-people-field');
+    roundPeopleField = document.getElementById('round-people-field');
+    roundPeopleList = document.getElementById('round-people');
+    roundPeopleError = document.getElementById('round-people-error');
     var form = document.getElementById('tip-form');
     if (!billInput || !peopleInput || !billError || !peopleError || !tipRadios.length ||
         !customInput || !customError || !roundUpInput || !noTipInput || !noTipError ||
         !currencyInput || !modeRadios.length || !equalFields || !detailFields ||
-        !peopleList || !itemsList || !addPersonBtn || !addItemBtn || !form) {
+        !peopleList || !itemsList || !addPersonBtn || !addItemBtn || !form ||
+        !peopleField || !noTipField || !detailPeopleField || !roundPeopleField ||
+        !roundPeopleList || !roundPeopleError) {
       console.error('TipSplitter: expected controls are missing from index.html');
       billInput = null;
       return;
@@ -546,6 +691,7 @@
     detailFields.addEventListener('input', onDetailInput);
     detailFields.addEventListener('change', onDetailChange);
     detailFields.addEventListener('click', onDetailClick);
+    roundPeopleList.addEventListener('change', onParticipantsChange);
     // Enter in a text field must never submit (and reload) the page.
     form.addEventListener('submit', function (event) { event.preventDefault(); });
 
@@ -577,7 +723,7 @@
     for (var i = 0; i < tipRadios.length; i++) {
       if (tipRadios[i].checked) tip = tipRadios[i].value;
     }
-    return {
+    var raw = {
       bill: billInput.value,
       people: peopleInput.value,
       noTip: noTipInput.value,
@@ -588,11 +734,22 @@
       mode: readMode(),
       detail: cloneDetail(detailRaw)
     };
+    if (named) {
+      // Counts are kept in step so the round is also a valid single bill.
+      var who = indexList(whoRaw, detailRaw.people.length);
+      var skip = indexList(noTipRaw, detailRaw.people.length)
+        .filter(function (p) { return who.indexOf(p) !== -1; });
+      raw.people = who.length ? String(who.length) : '';
+      raw.noTip = skip.length ? String(skip.length) : '';
+      raw.who = who;
+      raw.noTipWho = skip;
+    }
+    return raw;
   }
 
   // Writes raw values into the controls and recalculates as on page load
   // (no messages on bill/people that the user has not touched in this visit).
-  function applyRaw(raw) {
+  function applyRaw(raw, showErrors) {
     billInput.value = raw.bill;
     peopleInput.value = raw.people;
     noTipInput.value = raw.noTip || '';
@@ -604,20 +761,37 @@
     }
     setMode(raw.mode === ITEMS ? ITEMS : EQUAL);
     detailRaw = raw.detail ? cloneDetail(raw.detail) : defaultDetail();
+    whoRaw = named ? indexList(raw.who, detailRaw.people.length) : [];
+    noTipRaw = named ? indexList(raw.noTipWho, detailRaw.people.length) : [];
     renderDetail();
     showError(billInput, billError, '');
     showError(peopleInput, peopleError, '');
     try {
-      readAll(false);
+      readAll(!!showErrors);
     } catch (err) {
       console.error('TipSplitter restore failed', err);
     }
     notify();
   }
 
-  function setRaw(raw) {
+  // showErrors: also flag an empty/invalid bill right away (switching to a
+  // round the user already worked on).
+  function setRaw(raw, showErrors) {
     if (!billInput || !raw) return;
-    applyRaw(raw);
+    applyRaw(raw, showErrors);
+  }
+
+  // Named mode on/off; takes effect with the next setRaw().
+  function setNamed(on) {
+    named = !!on;
+  }
+
+  // Renames person i of the outing on screen (named mode) and recalculates.
+  function renamePerson(i, name) {
+    if (!billInput || !named || i < 0 || i >= detailRaw.people.length) return;
+    detailRaw.people[i] = String(name == null ? '' : name);
+    refreshNames(i);
+    update();
   }
 
   // Back to a freshly opened page: equal parts, empty bill/people/"Otro",
@@ -636,6 +810,11 @@
     getRaw: getRaw,
     setRaw: setRaw,
     reset: reset,
+    // Rounds (see the rounds block): pure raw -> values, named mode, renames.
+    evaluate: evaluate,
+    setNamed: setNamed,
+    isNamed: function () { return named; },
+    renamePerson: renamePerson,
     onChange: function (fn) {
       if (typeof fn !== 'function') return function () {};
       listeners.push(fn);
@@ -1091,6 +1270,625 @@
     window.TipSplitter.formatPercent = formatPercent;
     window.TipSplitter.buildSummary = buildSummary;
     window.TipSplitter.historyParts = historyParts;
+    window.TipSplitter.compute = compute;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+/*
+ * Tip Splitter — rounds ("Rondas"): several bills in one outing.
+ *
+ * The form always edits one round (the active one). Each round is kept as the
+ * raw control values TipSplitter.getRaw() returns, so it has every option a
+ * single bill has, and it is computed with the same functions (evaluate +
+ * compute), to the cent.
+ *   - With exactly one round nothing changes: no tabs, no people list, no
+ *     totals panel, plain single-bill raw values (only "Agregar ronda" shows).
+ *   - With 2+ rounds the outing has one people list (index = identity, shown
+ *     by name); every round's ticket people are that list, and in equal parts
+ *     each round ticks who was there (raw.who) and who skips the tip
+ *     (raw.noTipWho). The currency is one for the whole outing.
+ * Contract:
+ *   TipSplitter.outing.count(), .summary() (copied/WhatsApp text or null),
+ *   .personTotals() -> [{ name, cents }] (running total per person, complete
+ *   rounds only; with one round that bill's split), .grandTotal() -> cents,
+ *   .onChange(fn) (after any change to any round), .getData()/.restore(),
+ *   .reset(), .loadRaw(raw). document also gets a 'tipsplitter:outing' event.
+ */
+(function () {
+  'use strict';
+
+  var MAX_ROUNDS = 10;
+  var MAX_PEOPLE = 20;
+
+  var api = null;
+  var rounds = [];   // [{ label, raw }]
+  var active = 0;
+  var people = [];   // names of the outing's people (2+ rounds only)
+  var listeners = [];
+
+  var tabsEl, editEl, labelInput, removeBtn, addBtn, errorEl, statusEl;
+  var peopleField, peopleListEl, addPersonBtn, peopleErrorEl;
+  var totalsEl, personsEl, grandEl, noteEl;
+
+  function clone(raw) { return JSON.parse(JSON.stringify(raw)); }
+
+  function defaultRaw() {
+    return {
+      bill: '', people: '', noTip: '', tip: '15', custom: '', roundUp: false, currency: '$',
+      mode: 'equal', detail: { people: ['', ''], items: [{ name: '', price: '', who: [] }] }
+    };
+  }
+
+  function nameOf(name, i) {
+    var t = String(name == null ? '' : name).trim();
+    return t || 'Persona ' + (i + 1);
+  }
+
+  function roundLabel(i) {
+    var t = String(rounds[i] && rounds[i].label || '').trim();
+    return t || 'Ronda ' + (i + 1);
+  }
+
+  function range(n) {
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(i);
+    return out;
+  }
+
+  // Keeps the text counts in step with who/noTipWho, so a round is also a
+  // valid single bill (used when going back to one round).
+  function syncCounts(raw) {
+    var who = raw.who || [];
+    var skip = (raw.noTipWho || []).filter(function (p) { return who.indexOf(p) !== -1; });
+    raw.noTipWho = skip;
+    raw.people = who.length ? String(who.length) : '';
+    raw.noTip = skip.length ? String(skip.length) : '';
+    return raw;
+  }
+
+  // A single-bill raw -> a round of the outing with people `list`.
+  // Returns { raw, people } (people may have grown) or null when the outing
+  // would pass MAX_PEOPLE.
+  function toNamed(single, list) {
+    var raw = clone(single);
+    var names = list.slice();
+    var d = raw.detail && Array.isArray(raw.detail.people) && Array.isArray(raw.detail.items)
+      ? raw.detail : defaultRaw().detail;
+    // The ticket's people become people of the outing, matched by the name shown.
+    var used = {};
+    var map = d.people.map(function (n, i) {
+      var label = nameOf(n, i);
+      for (var j = 0; j < names.length; j++) {
+        if (!used[j] && nameOf(names[j], j) === label) { used[j] = true; return j; }
+      }
+      names.push(String(n == null ? '' : n));
+      used[names.length - 1] = true;
+      return names.length - 1;
+    });
+    var items = d.items.map(function (it) {
+      return {
+        name: it.name, price: it.price,
+        who: it.who.map(function (p) { return map[p]; })
+          .filter(function (p) { return p != null; })
+          .sort(function (a, b) { return a - b; })
+      };
+    });
+    // Equal parts: the first N people of the outing, the last k skip the tip.
+    var count = api.validatePeople(raw.people).value;
+    var who, skip = [];
+    if (count != null && count <= MAX_PEOPLE) {
+      while (names.length < count) names.push('');
+      who = range(count);
+      var k = api.validateNoTip(raw.noTip, count).value || 0;
+      skip = who.slice(count - k);
+    } else if (count != null) {
+      return null;
+    } else {
+      who = range(names.length);
+    }
+    if (names.length > MAX_PEOPLE) return null;
+    raw.detail = { people: names.slice(), items: items };
+    raw.who = who;
+    raw.noTipWho = skip;
+    return { raw: syncCounts(raw), people: names };
+  }
+
+  // Round of the outing -> plain single bill (people as counts).
+  function toSingle(raw) {
+    var out = syncCounts(clone(raw));
+    delete out.who;
+    delete out.noTipWho;
+    return out;
+  }
+
+  // People list grew: every round gets the new people (not ticked anywhere).
+  function growRounds() {
+    rounds.forEach(function (rd) {
+      while (rd.raw.detail.people.length < people.length) rd.raw.detail.people.push('');
+    });
+  }
+
+  function storeActive() {
+    var raw = api.getRaw();
+    if (raw) rounds[active].raw = raw;
+  }
+
+  // ---- Maths --------------------------------------------------------------
+
+  // -> { ok, r, shares: [cents per person of the outing], total } or { ok: false }.
+  function roundResult(i) {
+    var named = rounds.length > 1;
+    var values = i === active ? api.getValues() : api.evaluate(rounds[i].raw, named);
+    var c = null;
+    try { c = values && values.valid ? api.compute(values) : null; } catch (err) { c = null; }
+    if (!c) return { ok: false };
+    var r = c.r;
+    var n = named ? people.length : 0;
+    var shares = range(n).map(function () { return 0; });
+    if (named) {
+      if (r.mode === 'items') {
+        r.persons.forEach(function (p, j) { if (j < n) shares[j] += p.total; });
+      } else {
+        var skip = values.noTipWho || [];
+        var payers = (values.who || []).filter(function (p) { return skip.indexOf(p) === -1; });
+        skip.forEach(function (p) { shares[p] += r.noTipCents; });
+        payers.forEach(function (p, idx) { shares[p] += r.base + (idx < r.extra ? 1 : 0); });
+      }
+    }
+    return { ok: true, r: r, shares: shares, total: r.totalCents, values: values };
+  }
+
+  function totals() {
+    var persons = people.map(function () { return 0; });
+    var grand = 0;
+    var incomplete = [];
+    var results = rounds.map(function (rd, i) {
+      var res = roundResult(i);
+      if (!res.ok) { incomplete.push(i); return res; }
+      res.shares.forEach(function (s, j) { persons[j] += s; });
+      grand += res.total;
+      return res;
+    });
+    return { persons: persons, grand: grand, incomplete: incomplete, results: results };
+  }
+
+  function currency() {
+    var c = rounds[active] && rounds[active].raw.currency;
+    return api.CURRENCIES.indexOf(c) !== -1 ? c : '$';
+  }
+
+  function personTotals() {
+    if (rounds.length > 1) {
+      var t = totals();
+      return people.map(function (n, i) { return { name: nameOf(n, i), cents: t.persons[i] }; });
+    }
+    // One round: that bill's split.
+    var res = roundResult(0);
+    if (!res.ok) return [];
+    var r = res.r;
+    if (r.mode === 'items') return r.persons.map(function (p) { return { name: p.name, cents: p.total }; });
+    var out = [];
+    var payers = r.people - r.noTip;
+    for (var i = 0; i < r.people; i++) {
+      var cents = i < payers ? r.base + (i < r.extra ? 1 : 0) : r.noTipCents;
+      out.push({ name: 'Persona ' + (i + 1), cents: cents });
+    }
+    return out;
+  }
+
+  function quoteList(idx) {
+    var names = idx.map(function (i) { return '«' + roundLabel(i) + '»'; });
+    if (names.length === 1) return names[0];
+    return names.slice(0, -1).join(', ') + ' y ' + names[names.length - 1];
+  }
+
+  function incompleteText(idx) {
+    if (!idx.length) return '';
+    return idx.length === 1
+      ? quoteList(idx) + ' está incompleta: no se incluye en los totales.'
+      : quoteList(idx) + ' están incompletas: no se incluyen en los totales.';
+  }
+
+  // Copied / WhatsApp text. One round: exactly today's summary. 2+ rounds:
+  // one line per round in today's format, then everyone's running total.
+  function summary() {
+    if (!api) return null;
+    if (rounds.length < 2) return api.buildSummary(api.getValues());
+    var t = totals();
+    if (t.incomplete.length === rounds.length) return null;
+    var cur = currency();
+    var lines = rounds.map(function (rd, i) {
+      var res = t.results[i];
+      if (!res.ok) return roundLabel(i) + ': incompleta (no se incluye)';
+      return roundLabel(i) + ': ' + api.buildSummary(res.values);
+    });
+    var each = people.map(function (n, i) {
+      return nameOf(n, i) + ' ' + api.formatCents(t.persons[i], cur);
+    });
+    lines.push('Total de la salida ' + api.formatCents(t.grand, cur) + ' · ' + each.join(' · '));
+    return lines.join('\n');
+  }
+
+  // ---- Rendering ----------------------------------------------------------
+
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'className') node.className = attrs[k];
+      else node.setAttribute(k, attrs[k]);
+    });
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function renderTabs(t) {
+    var many = rounds.length > 1;
+    tabsEl.hidden = !many;
+    editEl.hidden = !many;
+    peopleField.hidden = !many;
+    addBtn.disabled = rounds.length >= MAX_ROUNDS;
+    if (!many) {
+      while (tabsEl.firstChild) tabsEl.removeChild(tabsEl.firstChild);
+      return;
+    }
+    // Reuse the buttons so a focused tab keeps its focus.
+    while (tabsEl.children.length > rounds.length) tabsEl.removeChild(tabsEl.lastChild);
+    while (tabsEl.children.length < rounds.length) {
+      var b = el('button', { type: 'button', className: 'round-tab' });
+      b.appendChild(el('span', { className: 'round-name' }));
+      b.appendChild(el('span', { className: 'round-flag' }));
+      tabsEl.appendChild(b);
+    }
+    rounds.forEach(function (rd, i) {
+      var btn = tabsEl.children[i];
+      btn.setAttribute('data-round', String(i));
+      btn.setAttribute('aria-current', i === active ? 'true' : 'false');
+      var bad = t.incomplete.indexOf(i) !== -1;
+      btn.firstChild.textContent = roundLabel(i);
+      btn.lastChild.textContent = bad ? ' · incompleta' : '';
+    });
+    if (document.activeElement !== labelInput) labelInput.value = rounds[active].label;
+    labelInput.placeholder = 'Ronda ' + (active + 1);
+  }
+
+  function renderPeopleList() {
+    while (peopleListEl.firstChild) peopleListEl.removeChild(peopleListEl.firstChild);
+    if (rounds.length < 2) return;
+    people.forEach(function (name, i) {
+      var input = el('input', {
+        type: 'text', id: 'outing-person-' + i, 'data-op': String(i),
+        placeholder: 'Persona ' + (i + 1), maxlength: '32', autocomplete: 'off',
+        'aria-label': 'Nombre de la persona ' + (i + 1)
+      });
+      input.value = name;
+      var remove = el('button', {
+        type: 'button', className: 'btn-small', 'data-op-remove': String(i),
+        'aria-label': 'Quitar a ' + nameOf(name, i)
+      }, 'Quitar');
+      remove.disabled = people.length <= 1;
+      var li = el('li', { className: 'detail-row' });
+      li.appendChild(input);
+      li.appendChild(remove);
+      peopleListEl.appendChild(li);
+    });
+    addPersonBtn.disabled = people.length >= MAX_PEOPLE;
+  }
+
+  function checkNames() {
+    var seen = {};
+    var dup = '';
+    people.forEach(function (n, i) {
+      var key = nameOf(n, i).toLowerCase();
+      if (seen[key] && !dup) dup = nameOf(n, i);
+      seen[key] = true;
+    });
+    var msg = dup ? 'Hay dos personas que se llaman «' + dup + '»: cambiá uno de los nombres.' : '';
+    if (peopleErrorEl.textContent !== msg) peopleErrorEl.textContent = msg;
+  }
+
+  function renderTotals(t) {
+    var many = rounds.length > 1;
+    totalsEl.hidden = !many;
+    while (personsEl.firstChild) personsEl.removeChild(personsEl.firstChild);
+    if (!many) return;
+    var cur = currency();
+    people.forEach(function (n, i) {
+      var li = el('li', { className: 'result' });
+      li.appendChild(el('span', { className: 'result-label' }, nameOf(n, i)));
+      li.appendChild(el('span', { className: 'result-value' }, api.formatCents(t.persons[i], cur)));
+      personsEl.appendChild(li);
+    });
+    grandEl.textContent = api.formatCents(t.grand, cur);
+    var note = incompleteText(t.incomplete);
+    noteEl.textContent = note;
+    noteEl.hidden = !note;
+  }
+
+  function fire() {
+    var t = totals();
+    try {
+      renderTabs(t);
+      renderTotals(t);
+      if (rounds.length > 1) checkNames();
+    } catch (err) {
+      console.error('TipSplitter rounds render failed', err);
+    }
+    listeners.forEach(function (fn) {
+      try { fn(); } catch (err) { console.error('TipSplitter outing listener failed', err); }
+    });
+    try {
+      document.dispatchEvent(new CustomEvent('tipsplitter:outing', {
+        detail: { rounds: rounds.length, people: personTotals(), grandTotal: t.grand, incomplete: t.incomplete.slice() }
+      }));
+    } catch (err) { console.error('TipSplitter outing event failed', err); }
+  }
+
+  // ---- Changes --------------------------------------------------------------
+
+  var applying = false;
+
+  // The form changed (typing, or a round put on screen).
+  function onInputsChange() {
+    if (!rounds.length) return;
+    storeActive();
+    if (rounds.length > 1) {
+      var raw = rounds[active].raw;
+      people = raw.detail.people.slice();
+      rounds.forEach(function (rd) { rd.raw.currency = raw.currency; });
+    }
+    if (!applying) fire();
+  }
+
+  // Puts round i on screen and notifies once.
+  function show(i, showErrors) {
+    active = i;
+    applying = true;
+    try {
+      api.setNamed(rounds.length > 1);
+      api.setRaw(rounds[i].raw, showErrors);
+    } finally {
+      applying = false;
+    }
+    fire();
+  }
+
+  function setError(msg) {
+    if (errorEl.textContent !== msg) errorEl.textContent = msg;
+  }
+
+  function addRound() {
+    if (rounds.length >= MAX_ROUNDS) return;
+    storeActive();
+    setError('');
+    if (rounds.length === 1) {
+      var conv = toNamed(rounds[0].raw, []);
+      if (!conv) { setError('Para usar rondas pueden ser hasta ' + MAX_PEOPLE + ' personas.'); return; }
+      people = conv.people;
+      rounds[0] = { label: '', raw: conv.raw };
+    }
+    var raw = defaultRaw();
+    raw.currency = rounds[0].raw.currency;
+    raw.detail.people = people.slice();
+    raw.who = range(people.length);
+    raw.noTipWho = [];
+    rounds.push({ label: '', raw: syncCounts(raw) });
+    show(rounds.length - 1, false);
+    renderPeopleList();
+    statusEl.textContent = 'Ronda ' + rounds.length + ' agregada';
+    try { labelInput.focus(); } catch (err) { /* best-effort */ }
+  }
+
+  function removeRound() {
+    if (rounds.length <= 1) return;
+    storeActive();
+    var gone = roundLabel(active);
+    rounds.splice(active, 1);
+    var next = Math.min(active, rounds.length - 1);
+    if (rounds.length === 1) {
+      rounds[0] = { label: '', raw: toSingle(rounds[0].raw) };
+      people = [];
+    }
+    show(next, rounds.length > 1);
+    renderPeopleList();
+    setError('');
+    statusEl.textContent = 'Ronda ' + gone + ' quitada';
+    try { (rounds.length > 1 ? tabsEl.children[next] : addBtn).focus(); } catch (err) { /* best-effort */ }
+  }
+
+  function onTabsClick(event) {
+    var t = event.target;
+    while (t && t !== tabsEl && !t.hasAttribute('data-round')) t = t.parentNode;
+    if (!t || t === tabsEl) return;
+    var i = Number(t.getAttribute('data-round'));
+    if (i === active || i < 0 || i >= rounds.length) return;
+    storeActive();
+    show(i, true);
+  }
+
+  function onLabelInput() {
+    if (rounds.length < 2) return;
+    rounds[active].label = labelInput.value;
+    fire();
+  }
+
+  function onPeopleInput(event) {
+    var t = event.target;
+    if (!t.hasAttribute('data-op')) return;
+    var i = Number(t.getAttribute('data-op'));
+    if (i < 0 || i >= people.length) return;
+    people[i] = t.value;
+    rounds.forEach(function (rd) { rd.raw.detail.people[i] = t.value; });
+    var btn = peopleListEl.querySelector('[data-op-remove="' + i + '"]');
+    if (btn) btn.setAttribute('aria-label', 'Quitar a ' + nameOf(t.value, i));
+    api.renamePerson(i, t.value); // recalculates -> onInputsChange -> fire
+  }
+
+  function reindex(list, j) {
+    return (list || []).filter(function (x) { return x !== j; })
+      .map(function (x) { return x > j ? x - 1 : x; });
+  }
+
+  function onPeopleClick(event) {
+    var t = event.target;
+    while (t && t !== peopleField && t.tagName !== 'BUTTON') t = t.parentNode;
+    if (!t || t === peopleField || t.disabled) return;
+    storeActive();
+    if (t === addPersonBtn) {
+      if (people.length >= MAX_PEOPLE) return;
+      people.push('');
+      growRounds();
+      // Added from this round: they were here.
+      var raw = rounds[active].raw;
+      raw.who = (raw.who || []).concat([people.length - 1]);
+      syncCounts(raw);
+      show(active, true);
+      renderPeopleList();
+      var input = document.getElementById('outing-person-' + (people.length - 1));
+      if (input) { try { input.focus(); } catch (err) { /* best-effort */ } }
+    } else if (t.hasAttribute('data-op-remove')) {
+      var j = Number(t.getAttribute('data-op-remove'));
+      if (people.length <= 1 || j < 0 || j >= people.length) return;
+      people.splice(j, 1);
+      rounds.forEach(function (rd) {
+        rd.raw.detail.people.splice(j, 1);
+        rd.raw.detail.items.forEach(function (it) { it.who = reindex(it.who, j); });
+        rd.raw.who = reindex(rd.raw.who, j);
+        rd.raw.noTipWho = reindex(rd.raw.noTipWho, j);
+        syncCounts(rd.raw);
+      });
+      show(active, true);
+      renderPeopleList();
+      var next = document.getElementById('outing-person-' + Math.min(j, people.length - 1));
+      if (next) { try { next.focus(); } catch (err) { /* best-effort */ } }
+    }
+  }
+
+  // ---- Saving / restoring (used by the actions block) ---------------------
+
+  // 2+ rounds: { active, rounds: [{ label, raw }] }; one round: null.
+  function getData() {
+    if (rounds.length < 2) return null;
+    storeActive();
+    return {
+      active: active,
+      rounds: rounds.map(function (rd) { return { label: rd.label, raw: clone(rd.raw) }; })
+    };
+  }
+
+  // data was checked by the actions block (same people in every round).
+  function restore(data) {
+    if (!data || !Array.isArray(data.rounds) || data.rounds.length < 2) return;
+    rounds = data.rounds.map(function (rd) { return { label: rd.label, raw: clone(rd.raw) }; });
+    people = rounds[0].raw.detail.people.slice();
+    var i = data.active >= 0 && data.active < rounds.length ? data.active : 0;
+    show(i, false);
+    renderPeopleList();
+  }
+
+  function reset() {
+    rounds = [{ label: '', raw: defaultRaw() }];
+    people = [];
+    active = 0;
+    applying = true;
+    try {
+      api.setNamed(false);
+      api.reset();
+    } finally {
+      applying = false;
+    }
+    storeActive();
+    renderPeopleList();
+    setError('');
+    fire();
+  }
+
+  // A history entry (single bill) into the active round.
+  function loadRaw(raw) {
+    if (rounds.length < 2) { api.setRaw(raw); return true; }
+    var conv = toNamed(raw, people);
+    if (!conv) { setError('Para usar rondas pueden ser hasta ' + MAX_PEOPLE + ' personas.'); return false; }
+    people = conv.people;
+    growRounds();
+    conv.raw.currency = currency();
+    rounds[active].raw = conv.raw;
+    show(active, true);
+    renderPeopleList();
+    return true;
+  }
+
+  // ---- Init ---------------------------------------------------------------
+
+  function init() {
+    api = window.TipSplitter;
+    tabsEl = document.getElementById('round-tabs');
+    editEl = document.getElementById('round-edit');
+    labelInput = document.getElementById('round-label');
+    removeBtn = document.getElementById('round-remove');
+    addBtn = document.getElementById('round-add');
+    errorEl = document.getElementById('round-error');
+    statusEl = document.getElementById('round-status');
+    peopleField = document.getElementById('outing-people-field');
+    peopleListEl = document.getElementById('outing-people');
+    addPersonBtn = document.getElementById('outing-add-person');
+    peopleErrorEl = document.getElementById('outing-people-error');
+    totalsEl = document.getElementById('outing-totals');
+    personsEl = document.getElementById('outing-persons');
+    grandEl = document.getElementById('outing-grand');
+    noteEl = document.getElementById('outing-note');
+    if (!tabsEl || !editEl || !labelInput || !removeBtn || !addBtn || !errorEl || !statusEl ||
+        !peopleField || !peopleListEl || !addPersonBtn || !peopleErrorEl || !totalsEl ||
+        !personsEl || !grandEl || !noteEl) {
+      console.error('TipSplitter: round elements are missing from index.html');
+      api = null;
+      return;
+    }
+    if (!api || typeof api.evaluate !== 'function' || typeof api.compute !== 'function' ||
+        typeof api.getRaw !== 'function' || !api.getRaw()) {
+      console.error('TipSplitter: inputs or results module is not available');
+      api = null;
+      return;
+    }
+    rounds = [{ label: '', raw: api.getRaw() }];
+    api.onChange(onInputsChange);
+    addBtn.addEventListener('click', addRound);
+    removeBtn.addEventListener('click', removeRound);
+    tabsEl.addEventListener('click', onTabsClick);
+    labelInput.addEventListener('input', onLabelInput);
+    peopleField.addEventListener('input', onPeopleInput);
+    peopleField.addEventListener('click', onPeopleClick);
+    renderTabs(totals());
+  }
+
+  if (window.TipSplitter) {
+    window.TipSplitter.outing = {
+      MAX_ROUNDS: MAX_ROUNDS,
+      count: function () { return rounds.length; },
+      active: function () { return active; },
+      summary: summary,
+      personTotals: personTotals,
+      grandTotal: function () { return totals().grand; },
+      getData: getData,
+      restore: restore,
+      reset: reset,
+      loadRaw: loadRaw,
+      onChange: function (fn) {
+        if (typeof fn !== 'function') return function () {};
+        listeners.push(fn);
+        return function () {
+          var i = listeners.indexOf(fn);
+          if (i !== -1) listeners.splice(i, 1);
+        };
+      },
+      // Exposed for testing; pure.
+      toNamed: function (raw, list) { return api ? toNamed(raw, list) : null; },
+      toSingle: toSingle
+    };
   }
 
   if (document.readyState === 'loading') {
@@ -1105,7 +1903,8 @@
  *
  * Saves the raw controls (mode, bill, people, tip choice, "Otro" text, rounding,
  * currency and the "Cuenta detallada" ticket) in
- * localStorage on every change and restores them on load. Storage may be
+ * localStorage on every change and restores them on load (an outing with 2+
+ * rounds is saved under its own key instead, see the rounds block). Storage may be
  * unavailable (file:// in some browsers, private mode): every access is
  * guarded and failures are silent — the app just does not remember.
  * "Copiar resumen" copies TipSplitter.buildSummary(); if the clipboard is
@@ -1121,6 +1920,9 @@
   'use strict';
 
   var STORAGE_KEY = 'tipSplitter:v1';
+  // An outing with 2+ rounds; with one round only STORAGE_KEY is used, as before.
+  var OUTING_KEY = 'tipSplitter:outing:v1';
+  var MAX_ROUNDS = 10;
   var TIPS = ['10', '15', '20', 'other'];
   var CURRENCIES = ['$', '€', 'US$'];
   var MAX_TEXT = 32;
@@ -1177,11 +1979,59 @@
       detail = checkDetail(data.detail);
       if (!detail) return null;
     }
-    return {
+    var out = {
       bill: data.bill, people: data.people, noTip: noTip,
       tip: data.tip, custom: data.custom, roundUp: data.roundUp, currency: currency,
       mode: mode, detail: detail
     };
+    // Rounds of an outing: who was there / who skips the tip (person indexes).
+    if (data.who !== undefined || data.noTipWho !== undefined) {
+      if (!detail) return null;
+      var who = checkIndexes(data.who, detail.people.length);
+      var skip = checkIndexes(data.noTipWho, detail.people.length);
+      if (!who || !skip) return null;
+      for (var s = 0; s < skip.length; s++) if (who.indexOf(skip[s]) === -1) return null;
+      out.who = who;
+      out.noTipWho = skip;
+    }
+    return out;
+  }
+
+  // Unique integer indexes in 0..n-1 (sorted copy), or null.
+  function checkIndexes(list, n) {
+    if (!Array.isArray(list) || list.length > n) return null;
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      if (typeof p !== 'number' || !Number.isInteger(p) || p < 0 || p >= n || seen[p]) return null;
+      seen[p] = true;
+    }
+    return list.slice().sort(function (a, b) { return a - b; });
+  }
+
+  // Saved outing JSON -> { active, rounds: [{ label, raw }] }, or null when
+  // anything is missing or off (every round must have the same people).
+  function parseOuting(text) {
+    if (typeof text !== 'string' || text === '') return null;
+    var data;
+    try { data = JSON.parse(text); } catch (err) { return null; }
+    if (!data || typeof data !== 'object' || data.v !== 1 || !Array.isArray(data.rounds)) return null;
+    if (data.rounds.length < 2 || data.rounds.length > MAX_ROUNDS) return null;
+    if (typeof data.active !== 'number' || !Number.isInteger(data.active) ||
+        data.active < 0 || data.active >= data.rounds.length) return null;
+    var rounds = [];
+    var people = null;
+    for (var i = 0; i < data.rounds.length; i++) {
+      var rd = data.rounds[i];
+      if (!rd || typeof rd !== 'object' || !isText(rd.label)) return null;
+      var raw = checkRaw(rd.raw);
+      if (!raw || !raw.detail || !raw.who) return null;
+      var names = JSON.stringify(raw.detail.people);
+      if (people === null) people = names;
+      else if (names !== people) return null;
+      rounds.push({ label: rd.label, raw: raw });
+    }
+    return { active: data.active, rounds: rounds };
   }
 
   // { people: [name], items: [{ name, price, who: [index] }] } (raw text), or null.
@@ -1206,15 +2056,26 @@
     return { people: d.people.slice(), items: items };
   }
 
+  // -> { outing } (2+ rounds), { raw } (one bill, saved by any version) or null.
+  // Damaged data is removed and the app opens with its defaults.
   function load() {
     var s = storage();
     if (!s) return null;
-    var text = null;
-    try { text = s.getItem(STORAGE_KEY); } catch (err) { return null; }
+    var outingText = null, text = null;
+    try {
+      outingText = s.getItem(OUTING_KEY);
+      text = s.getItem(STORAGE_KEY);
+    } catch (err) { return null; }
+    if (outingText != null) {
+      var outing = parseOuting(outingText);
+      if (outing) return { outing: outing };
+      clear();
+      return null;
+    }
     if (text == null) return null;
     var raw = parseSaved(text);
-    if (!raw) clear();
-    return raw;
+    if (!raw) { clear(); return null; }
+    return { raw: raw };
   }
 
   var paused = false;
@@ -1225,6 +2086,13 @@
     var s = storage();
     if (!s || !api) return;
     try {
+      var data = api.outing ? api.outing.getData() : null;
+      if (data) {
+        s.setItem(OUTING_KEY, JSON.stringify({ v: 1, active: data.active, rounds: data.rounds }));
+        s.removeItem(STORAGE_KEY);
+        return;
+      }
+      s.removeItem(OUTING_KEY);
       var raw = api.getRaw();
       if (!raw) return;
       s.setItem(STORAGE_KEY, JSON.stringify({
@@ -1239,6 +2107,7 @@
     var s = storage();
     if (!s) return;
     try { s.removeItem(STORAGE_KEY); } catch (err) { /* nothing to do */ }
+    try { s.removeItem(OUTING_KEY); } catch (err) { /* nothing to do */ }
   }
 
   // ---- Copy ---------------------------------------------------------------
@@ -1294,9 +2163,17 @@
     return ok;
   }
 
-  function onCopy() {
+  // The copied / shared text: today's summary with one round, every round
+  // and everyone's running total with more (see the rounds block).
+  function summaryText() {
     var api = window.TipSplitter;
-    var text = api && api.buildSummary ? api.buildSummary(api.getValues()) : null;
+    if (!api) return null;
+    if (api.outing) return api.outing.summary();
+    return api.buildSummary ? api.buildSummary(api.getValues()) : null;
+  }
+
+  function onCopy() {
+    var text = summaryText();
     if (!text) { copyBtn.disabled = true; return; }
     recordNow();
     var clip = null;
@@ -1318,8 +2195,7 @@
   // Opens WhatsApp (wa.me) with the same text that "Copiar resumen" copies.
   // Only navigates on click; nothing is loaded from the network on page load.
   function onShare() {
-    var api = window.TipSplitter;
-    var text = api && api.buildSummary ? api.buildSummary(api.getValues()) : null;
+    var text = summaryText();
     if (!text) { shareBtn.disabled = true; return; }
     recordNow();
     var url = 'https://wa.me/?text=' + encodeURIComponent(text);
@@ -1333,10 +2209,9 @@
     try { window.location.href = url; } catch (err) { showFallback(text); }
   }
 
-  function onValues(values) {
-    var api = window.TipSplitter;
+  function onValues() {
     var summary = null;
-    try { summary = api.buildSummary(values); } catch (err) { summary = null; }
+    try { summary = summaryText(); } catch (err) { summary = null; }
     copyBtn.disabled = !summary;
     shareBtn.disabled = !summary;
     // Never leave an old summary on screen.
@@ -1346,7 +2221,10 @@
   function onReset() {
     var api = window.TipSplitter;
     paused = true;
-    try { api.reset(); } finally { paused = false; }
+    try {
+      if (api.outing) api.outing.reset();
+      else api.reset();
+    } finally { paused = false; }
     clear();
     hideFallback();
   }
@@ -1443,6 +2321,8 @@
   function recordNow() {
     if (historyTimer) { clearTimeout(historyTimer); historyTimer = null; }
     var api = window.TipSplitter;
+    // The list holds single bills; an outing with rounds is not one.
+    if (api.outing && api.outing.count() > 1) return;
     try {
       var values = api.getValues();
       var parts = api.historyParts(values);
@@ -1478,7 +2358,9 @@
     var entry = history[Number(target.getAttribute('data-index'))];
     if (!entry) return;
     if (historyTimer) { clearTimeout(historyTimer); historyTimer = null; }
-    window.TipSplitter.setRaw(entry.raw);
+    var api = window.TipSplitter;
+    if (api.outing) api.outing.loadRaw(entry.raw);
+    else api.setRaw(entry.raw);
     statusEl.textContent = 'Cuenta cargada: total ' + entry.total;
     try {
       document.getElementById('tip-form').scrollIntoView({ block: 'start' });
@@ -1519,11 +2401,14 @@
     }
 
     var saved = load();
-    if (saved) api.setRaw(saved);
+    if (saved && saved.outing && api.outing) api.outing.restore(saved.outing);
+    else if (saved && saved.raw) api.setRaw(saved.raw);
 
-    api.onChange(onValues);
-    api.onChange(save);
-    onValues(api.getValues());
+    // With the rounds block, its notice comes after the active round is stored.
+    var changes = api.outing || api;
+    changes.onChange(onValues);
+    changes.onChange(save);
+    onValues();
 
     copyBtn.addEventListener('click', onCopy);
     shareBtn.addEventListener('click', onShare);
@@ -1547,6 +2432,7 @@
   if (window.TipSplitter) {
     // Exposed for testing; pure function with no DOM access.
     window.TipSplitter.parseSaved = parseSaved;
+    window.TipSplitter.parseOuting = parseOuting;
     window.TipSplitter.parseHistory = parseHistory;
   }
 
